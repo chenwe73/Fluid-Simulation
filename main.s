@@ -1,0 +1,641 @@
+.include "nios_macros.s"
+.include "constants.s"
+
+.section .data
+.align 2
+.global NEXT
+.global CURRENT
+.global BLOCK
+
+
+NEXT: .space SIZE
+CURRENT: .space SIZE
+BLOCK: .space SIZE
+
+.section .text 
+
+.global _start
+_start:
+	movia sp, sp_INIT
+INIT:
+	movia r20, BLOCK
+	movia r21, NEXT
+	movia r22, CURRENT
+	movi r23, 1 # r23 = state (0 = gas, 1 = liquid)
+	call CA
+	call INIT_MAP
+	call UPDATE
+	call CLEAR
+	call VGA
+
+	
+TRAVERSE_ARRAY:
+	call SWITCH
+	movi r8, 0 #register to store current row of array
+	movi r9, 0 #register to store current col of array
+	movia r10, CURRENT #counter to store current address of array element
+	movia r13, NEXT
+	movia r14, BLOCK
+	# r15 = flow
+	# r16 = remaining_mass
+
+	LOOP:
+	movi r4, ROWS-1 #last row of array
+	bgt r8, r4, DONE # exit condition, if past last row
+	# see if we CAn access array elements above, below, to the left and to the right
+	beq r8, r0, DONE_CHECKING # if on edge, do not process element out of bounds, continue to next check
+	beq r8, r4, DONE_CHECKING # if on edge, do not process element out of bounds, continue to next check
+	beq r9, r0, DONE_CHECKING # if on edge, do not process element out of bounds, continue to next check
+	movi r4, COLS-1 #last col of array
+	beq r9, r4, DONE_CHECKING # if on edge, do not process element out of bounds, continue to next check
+
+
+
+
+	ldw r4, 0(r14)
+	movui r5, WALL # if (BLOCK == WALL)
+	beq r4, r5, DONE_CHECKING # exit loop
+
+	
+	ldw r16, 0(r10) # if (remaining_mass <= 0)
+	ble r16, r0, DONE_CHECKING # exit loop
+
+	beq r23, r0, GAS
+
+	LIQUID: 
+	CHECK_BELOW:
+		# if (BLOCK(below) == WALL) exit
+		mov r4, r14
+		call PROCESS_ELEMENT_BELOW
+		ldw r4, 0(r2)
+		movui r5, WALL
+		beq r4, r5, DONE_CHECK_BELOW
+		
+		# GET_FLOW(remaining_mass, mass(below))
+		mov r4, r10
+		call PROCESS_ELEMENT_BELOW
+		ldw r5, 0(r2)
+		mov r4, r16
+		call GET_FLOW_VERT
+
+		# CONSTRAIN(flow, remaining_mass)
+		mov r4, r2
+		mov r5, r16
+		call CONSTRAIN 
+		mov r15, r2 # r15 = flow
+
+		# center = center - flow
+		ldw r4, 0(r13)
+		sub r4, r4, r15
+		stw r4, 0(r13)
+
+		# below = below + flow
+		mov r4, r13
+		call PROCESS_ELEMENT_BELOW
+		ldw r5, 0(r2)
+		add r5, r5, r15
+		stw r5, 0(r2)
+
+		#remaining_mass -= Flow
+		sub r16, r16, r15
+	DONE_CHECK_BELOW:
+	ble r16, r0, DONE_CHECKING # if (remaining_mass <= 0) exit loop
+	
+	CHECK_LEFT:
+		# if (BLOCK(LEFT) == WALL) exit
+		mov r4, r14
+		call PROCESS_ELEMENT_LEFT
+		ldw r4, 0(r2)
+		movui r5, WALL
+		beq r4, r5, DONE_CHECK_LEFT
+
+		# GET_FLOW(remaining_mass, mass(LEFT))
+		mov r4, r10
+		call PROCESS_ELEMENT_LEFT
+		ldw r5, 0(r2)
+		mov r4, r16
+		call GET_FLOW_HORI
+
+		# CONSTRAIN(flow, remaining_mass)
+		mov r4, r2
+		mov r5, r16
+		call CONSTRAIN 
+		mov r15, r2 # r15 = flow
+
+		# center = center - flow
+		ldw r4, 0(r13)
+		sub r4, r4, r15
+		stw r4, 0(r13)
+
+		# LEFT = LEFT + flow
+		mov r4, r13
+		call PROCESS_ELEMENT_LEFT
+		ldw r5, 0(r2)
+		add r5, r5, r15
+		stw r5, 0(r2)
+
+		#remaining_mass -= Flow
+		sub r16, r16, r15
+	DONE_CHECK_LEFT:
+	ble r16, r0, DONE_CHECKING # if (remaining_mass <= 0) exit loop
+	
+	CHECK_RIGHT:
+		# if (BLOCK(RIGHT) == WALL) exit
+		mov r4, r14
+		call PROCESS_ELEMENT_RIGHT
+		ldw r4, 0(r2)
+		movui r5, WALL
+		beq r4, r5, DONE_CHECK_RIGHT
+
+		# GET_FLOW(remaining_mass, mass(RIGHT))
+		mov r4, r10
+		call PROCESS_ELEMENT_RIGHT
+		ldw r5, 0(r2)
+		mov r4, r16
+		call GET_FLOW_HORI
+
+		# CONSTRAIN(flow, remaining_mass)
+		mov r4, r2
+		mov r5, r16
+		call CONSTRAIN 
+		mov r15, r2 # r15 = flow
+
+		# center = center - flow
+		ldw r4, 0(r13)
+		sub r4, r4, r15
+		stw r4, 0(r13)
+
+		# RIGHT = RIGHT + flow
+		mov r4, r13
+		call PROCESS_ELEMENT_RIGHT
+		ldw r5, 0(r2)
+		add r5, r5, r15
+		stw r5, 0(r2)
+
+		#remaining_mass -= Flow
+		sub r16, r16, r15
+	DONE_CHECK_RIGHT:
+	ble r16, r0, DONE_CHECKING # if (remaining_mass <= 0) exit loop
+	
+	CHECK_ABOVE:
+	DONE_CHECK_ABOVE:
+
+	br DONE_CHECKING
+
+
+
+	GAS: #*****************************************************************
+	CHECK_BELOW_GAS:
+		# if (BLOCK(BELOW) == WALL) exit
+		mov r4, r14
+		call PROCESS_ELEMENT_BELOW
+		ldw r4, 0(r2)
+		movui r5, WALL
+		beq r4, r5, DONE_CHECK_BELOW_GAS
+
+		# GET_FLOW(remaining_mass, mass(BELOW))
+		mov r4, r10
+		call PROCESS_ELEMENT_BELOW
+		ldw r5, 0(r2)
+		mov r4, r16
+		call GET_FLOW_HORI
+
+		# CONSTRAIN(flow, remaining_mass)
+		mov r4, r2
+		mov r5, r16
+		call CONSTRAIN 
+		mov r15, r2 # r15 = flow
+
+		# center = center - flow
+		ldw r4, 0(r13)
+		sub r4, r4, r15
+		stw r4, 0(r13)
+
+		# BELOW = BELOW + flow
+		mov r4, r13
+		call PROCESS_ELEMENT_BELOW
+		ldw r5, 0(r2)
+		add r5, r5, r15
+		stw r5, 0(r2)
+
+		#remaining_mass -= Flow
+		sub r16, r16, r15
+	DONE_CHECK_BELOW_GAS:
+
+	ble r16, r0, DONE_CHECKING # if (remaining_mass <= 0) exit loop
+	
+	CHECK_LEFT_GAS:
+		# if (BLOCK(LEFT) == WALL) exit
+		mov r4, r14
+		call PROCESS_ELEMENT_LEFT
+		ldw r4, 0(r2)
+		movui r5, WALL
+		beq r4, r5, DONE_CHECK_LEFT_GAS
+
+		# GET_FLOW(remaining_mass, mass(LEFT))
+		mov r4, r10
+		call PROCESS_ELEMENT_LEFT
+		ldw r5, 0(r2)
+		mov r4, r16
+		call GET_FLOW_HORI
+
+		# CONSTRAIN(flow, remaining_mass)
+		mov r4, r2
+		mov r5, r16
+		call CONSTRAIN 
+		mov r15, r2 # r15 = flow
+
+		# center = center - flow
+		ldw r4, 0(r13)
+		sub r4, r4, r15
+		stw r4, 0(r13)
+
+		# LEFT = LEFT + flow
+		mov r4, r13
+		call PROCESS_ELEMENT_LEFT
+		ldw r5, 0(r2)
+		add r5, r5, r15
+		stw r5, 0(r2)
+
+		#remaining_mass -= Flow
+		sub r16, r16, r15
+
+	DONE_CHECK_LEFT_GAS:
+	ble r16, r0, DONE_CHECKING # if (remaining_mass <= 0) exit loop
+	
+	CHECK_RIGHT_GAS:
+		# if (BLOCK(RIGHT) == WALL) exit
+		mov r4, r14
+		call PROCESS_ELEMENT_RIGHT
+		ldw r4, 0(r2)
+		movui r5, WALL
+		beq r4, r5, DONE_CHECK_RIGHT_GAS
+
+		# GET_FLOW(remaining_mass, mass(RIGHT))
+		mov r4, r10
+		call PROCESS_ELEMENT_RIGHT
+		ldw r5, 0(r2)
+		mov r4, r16
+		call GET_FLOW_HORI
+
+		# CONSTRAIN(flow, remaining_mass)
+		mov r4, r2
+		mov r5, r16
+		call CONSTRAIN 
+		mov r15, r2 # r15 = flow
+
+		# center = center - flow
+		ldw r4, 0(r13)
+		sub r4, r4, r15
+		stw r4, 0(r13)
+
+		# RIGHT = RIGHT + flow
+		mov r4, r13
+		call PROCESS_ELEMENT_RIGHT
+		ldw r5, 0(r2)
+		add r5, r5, r15
+		stw r5, 0(r2)
+
+		#remaining_mass -= Flow
+		sub r16, r16, r15
+
+	DONE_CHECK_RIGHT_GAS:
+	ble r16, r0, DONE_CHECKING # if (remaining_mass <= 0) exit loop
+	
+	CHECK_ABOVE_GAS:
+		# if (BLOCK(ABOVE) == WALL) exit
+		mov r4, r14
+		call PROCESS_ELEMENT_ABOVE
+		ldw r4, 0(r2)
+		movui r5, WALL
+		beq r4, r5, DONE_CHECK_ABOVE_GAS
+
+		# GET_FLOW(remaining_mass, mass(ABOVE))
+		mov r4, r10
+		call PROCESS_ELEMENT_ABOVE
+		ldw r5, 0(r2)
+		mov r4, r16
+		call GET_FLOW_HORI
+
+		#muli r2, r2, 2 # gas floats up more
+		# CONSTRAIN(flow, remaining_mass)
+		mov r4, r2
+		mov r5, r16
+		call CONSTRAIN 
+		mov r15, r2 # r15 = flow
+
+		# center = center - flow
+		ldw r4, 0(r13)
+		sub r4, r4, r15
+		stw r4, 0(r13)
+
+		# ABOVE = ABOVE + flow
+		mov r4, r13
+		call PROCESS_ELEMENT_ABOVE
+		ldw r5, 0(r2)
+		add r5, r5, r15
+		stw r5, 0(r2)
+
+		#remaining_mass -= Flow
+		sub r16, r16, r15
+	DONE_CHECK_ABOVE_GAS:
+	
+	/*
+	mov r4, r10
+	call PROCESS_ELEMENT_ABOVE
+	ldw r4, 0(r2)
+	stw r4, 0(r13)
+	*/
+
+
+	
+
+	DONE_CHECKING:
+		addi r10, r10, ELEMENTSIZE # incrementing array pointer
+		addi r13, r13, ELEMENTSIZE 
+		addi r14, r14, ELEMENTSIZE 
+		addi r9, r9, 1
+
+	movi r4, COLS-1 #last col of array
+	bgt r9, r4, UPDATE_ROW_AND_COL # if col goes out of bounds while incrementing, increase row and reset col
+	br DONE_UPDATING:
+
+	UPDATE_ROW_AND_COL:
+		addi r8, r8, 1
+		movi r9, 0
+
+	DONE_UPDATING:
+		br LOOP
+
+DONE:
+	call UPDATE
+	call VGA
+
+	/*mov r4, r0
+	movia r5, 0
+	LOOP_DELAY:
+		addi r4, r4, 1
+		blt r4, r5, LOOP_DELAY
+	DONE_DELAY:*/
+	br TRAVERSE_ARRAY
+	
+LOOP_FOREVER:
+	br LOOP_FOREVER
+
+
+SWITCH:
+	subi sp, sp, 8
+	stw ra, 0(sp)
+	stw r16, 4(sp)
+
+	LOOP_PAUSE:
+	movia r16,ADDR_SLIDESWITCHES
+  	ldwio r16,0(r16)                /* Read switches */
+
+	andi r4, r16, 0b1
+	mov r23, r4
+
+	movi r4, 0b10
+	andi r5, r16, 0b10
+	beq r5, r4, SWITCH1
+
+	movi r4, 0b100
+	andi r5, r16, 0b100
+	beq r5, r4, SWITCH2
+	
+	br DONE_SWITCH
+
+	SWITCH1:
+
+		br LOOP_PAUSE
+	br DONE_SWITCH
+
+	SWITCH2:
+		call INIT_MAP
+		call UPDATE
+		#call CLEAR
+		call VGA
+	br DONE_SWITCH
+	
+	DONE_SWITCH:
+
+	ldw r16, 4(sp)
+	ldw ra, 0(sp)
+	addi sp, sp, 8
+ret
+
+# r4 = upper
+# r5 = lower
+# r2 = flow
+GET_FLOW_VERT:
+	subi sp, sp, 8
+	stw ra, 0(sp)
+	stw r16, 4(sp)
+
+	
+	# flow = FULL - lower
+	movui r16, FULL
+	sub r2, r16, r5
+	
+
+	ldw r16, 4(sp)
+	ldw ra, 0(sp)
+	addi sp, sp, 8
+ret
+
+
+# r4 = center
+# r5 = adjacent
+# r2 = flow (from center to adjacent)
+# should always be positive
+GET_FLOW_HORI:
+	subi sp, sp, 8
+	stw ra, 0(sp)
+	stw r16, 4(sp)
+
+	
+	# flow = (center - adjacent)/4
+	sub r16, r4, r5
+	movi r6, 2
+	div r2, r16, r6
+	#mov r2, r16
+
+	ldw r16, 4(sp)
+	ldw ra, 0(sp)
+	addi sp, sp, 8
+ret
+
+
+# r4 = input
+# r5 = upper bound
+# r2 = bounded value
+# lower bound = 0
+CONSTRAIN:
+	subi sp, sp, 8
+	stw ra, 0(sp)
+	stw r16, 4(sp)
+
+	# flow = flow/2
+	movi r16, 2
+	div r4, r4, r16
+	
+	# LOWER_BOUND
+	bgt r4, r0, LOWER_BOUNDED
+		mov r2, r0
+		br DONE_CONSTRAIN
+	LOWER_BOUNDED:
+	
+	# UPPER_BOUND
+	mov r2, r4
+	bleu r4, r5, UPPER_BOUNDED
+		mov r2, r5
+	UPPER_BOUNDED:
+
+	# MAX_BOUND
+	movui r4, MAX_FLOW
+	bleu r2, r4, MAX_BOUNDED
+		mov r2, r4
+	MAX_BOUNDED:
+
+	DONE_CONSTRAIN:
+
+	ldw r16, 4(sp)
+	ldw ra, 0(sp)
+	addi sp, sp, 8
+ret
+
+CA:
+	subi sp, sp, 24
+	stw ra, 0(sp)
+	stw r16, 4(sp)
+	stw r17, 8(sp)
+	stw r18, 12(sp) # loop counter
+	stw r19, 16(sp)
+	stw r20, 20(sp)
+	
+	movia r16, NEXT
+	movia r17, SIZE
+	mov r18, r0 
+	mov r20, r0
+	
+	loop_CA:
+		beq r18, r17, after_CA
+		add r19, r16, r18
+		stw r0, 0(r19)
+		
+		addi r18, r18, ELEMENTSIZE
+		addi r20, r20, 1
+		br loop_CA
+		
+	after_CA:
+
+	ldw r20, 20(sp)
+	ldw r19, 16(sp)
+	ldw r18, 12(sp)
+	ldw r17, 8(sp)
+	ldw r16, 4(sp)
+	ldw ra, 0(sp)
+	addi sp, sp, 24
+ret
+
+
+# copying NEXT to CURRENT
+UPDATE:
+	subi sp, sp, 32
+	stw ra, 0(sp)
+	stw r16, 4(sp)
+	stw r17, 8(sp)
+	stw r18, 12(sp) # loop counter
+	stw r19, 16(sp)
+	stw r20, 20(sp)
+	stw r21, 24(sp)
+	stw r22, 28(sp)
+	
+	movia r16, NEXT
+	movia r17, SIZE
+	mov r18, r0 
+	movia r20, CURRENT
+	
+	loop_UPDATE:
+		beq r18, r17, after_UPDATE
+		add r19, r16, r18
+		add r21, r20, r18
+		
+		ldw r22, 0(r19)
+		stw r22, 0(r21)
+		
+		addi r18, r18, ELEMENTSIZE
+		br loop_UPDATE
+		
+	after_UPDATE:
+	
+	ldw r22, 28(sp)
+	ldw r21, 24(sp)
+	ldw r20, 20(sp)
+	ldw r19, 16(sp)
+	ldw r18, 12(sp)
+	ldw r17, 8(sp)
+	ldw r16, 4(sp)
+	ldw ra, 0(sp)
+	addi sp, sp, 32
+ret
+
+
+ARRAY_ACCESS: #for array[i][j] ...put i in r4 and j in r5, then returns array element address in r2
+	subi sp, sp, 4
+	stw ra, 0(sp)
+
+	mov r2, r6
+	muli r4, r4, ELEMENTSIZE*COLS
+	add r2, r2, r4
+	muli r5, r5, ELEMENTSIZE
+	add r2, r2, r5
+
+	ldw ra, 0(sp)
+	addi sp, sp, 4
+ret	
+
+
+PROCESS_ELEMENT_ABOVE:
+	subi sp, sp, 4
+	stw ra, 0(sp)
+	
+	subi r2, r4, COLS*ELEMENTSIZE # array pointer r2 contains address of element above
+	
+	ldw ra, 0(sp)
+	addi sp, sp, 4
+ret
+
+PROCESS_ELEMENT_BELOW:
+	subi sp, sp, 4
+	stw ra, 0(sp)
+	
+	addi r2, r4, COLS*ELEMENTSIZE # array pointer r2 contains address of element below
+	
+	ldw ra, 0(sp)
+	addi sp, sp, 4
+ret
+
+PROCESS_ELEMENT_LEFT:
+	subi sp, sp, 4
+	stw ra, 0(sp)
+	
+	subi r2, r4, ELEMENTSIZE # array pointer r2 contains address of element to left
+
+	ldw ra, 0(sp)
+	addi sp, sp, 4
+ret
+
+PROCESS_ELEMENT_RIGHT:
+	subi sp, sp, 4
+	stw ra, 0(sp)
+	
+	addi r2, r4, ELEMENTSIZE # array pointer r2 contains address of element to right
+
+	ldw ra, 0(sp)
+	addi sp, sp, 4
+ret
+
+
+
+

@@ -1,0 +1,36 @@
+# include constants
+
+.equ ADDR_VGA, 0x08000000
+.equ TIMER, 0x10002000
+.equ JTAG_UART, 0x10001000
+.equ PERIOD, 50000000
+.equ sp_INIT, 0x00800000
+.equ ADDR_SLIDESWITCHES, 0x10000040
+
+
+.equ ROWS, 40
+.equ COLS, 60
+.equ NUM, ROWS*COLS
+
+.equ ELEMENTSIZE, 4
+.equ SIZE, NUM * ELEMENTSIZE
+
+#.equ BLOCK_ELEMENTSIZE, 4
+#.equ BLOCK_SIZE, NUM * BLOCK_ELEMENTSIZE
+
+.equ X, 1
+.equ Y, 1
+.equ STARTINGPOINT, X*2 + Y*1024
+.equ ZOOM, 5
+
+.equ WHITE, 0xFFFF
+.equ BLUE_SHIFT, 11
+
+
+.equ WALL, 0x0
+.equ FLUID, 0x1
+
+.equ FULL, 0xFFFF # maximum surface pressure
+.equ MAX_FLOW, 0XFFFF
+
+
